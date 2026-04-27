@@ -4,12 +4,15 @@ import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
 data class ServiceInfo(
     val name: String,
+    val label: String = "",
     val status: String,
     val image: String,
     @SerializedName("web_port") val webPort: Int?,
@@ -38,6 +41,11 @@ data class HealthInfo(
     val uptime: String = ""
 )
 
+data class PodConfig(
+    @SerializedName("web_paths") val webPaths: MutableMap<String, String> = mutableMapOf(),
+    @SerializedName("service_labels") val serviceLabels: MutableMap<String, String> = mutableMapOf()
+)
+
 class PodApiClient(private val baseUrl: String) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
@@ -64,6 +72,32 @@ class PodApiClient(private val baseUrl: String) {
             gson.fromJson(body, HealthInfo::class.java)
         } catch (e: Exception) {
             null
+        }
+    }
+
+    suspend fun getConfig(): PodConfig? = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder().url("$baseUrl/api/config").build()
+            val response = client.newCall(request).execute()
+            val body = response.body?.string() ?: return@withContext null
+            gson.fromJson(body, PodConfig::class.java)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    suspend fun saveConfig(config: PodConfig): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val json = gson.toJson(config)
+            val requestBody = json.toRequestBody("application/json".toMediaType())
+            val request = Request.Builder()
+                .url("$baseUrl/api/config")
+                .post(requestBody)
+                .build()
+            val response = client.newCall(request).execute()
+            response.isSuccessful
+        } catch (e: Exception) {
+            false
         }
     }
 }

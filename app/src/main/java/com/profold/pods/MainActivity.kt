@@ -22,20 +22,23 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -49,6 +52,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,6 +66,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.profold.pods.ui.theme.MyPodsTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 private const val PI_HOST = "100.97.40.66"
 private const val API_PORT = 8090
@@ -91,6 +96,7 @@ fun MyPodsApp(widthSizeClass: WindowWidthSizeClass) {
     var selectedDevice by remember { mutableStateOf<DeviceInfo?>(null) }
     var openWebUrl by remember { mutableStateOf<String?>(null) }
     var showSetup by remember { mutableStateOf<DeviceInfo?>(null) }
+    var showAdvanced by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -101,9 +107,10 @@ fun MyPodsApp(widthSizeClass: WindowWidthSizeClass) {
         }
     }
 
-    BackHandler(enabled = openWebUrl != null || selectedDevice != null || showSetup != null) {
+    BackHandler(enabled = openWebUrl != null || selectedDevice != null || showSetup != null || showAdvanced) {
         when {
             openWebUrl != null -> openWebUrl = null
+            showAdvanced -> showAdvanced = false
             showSetup != null -> showSetup = null
             selectedDevice != null -> selectedDevice = null
         }
@@ -111,6 +118,7 @@ fun MyPodsApp(widthSizeClass: WindowWidthSizeClass) {
 
     val title = when {
         openWebUrl != null -> selectedDevice?.name ?: "Service"
+        showAdvanced -> "Advanced"
         showSetup != null -> "Set Up ${showSetup!!.name}"
         selectedDevice != null -> selectedDevice!!.name
         else -> "My Pods"
@@ -124,7 +132,19 @@ fun MyPodsApp(widthSizeClass: WindowWidthSizeClass) {
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = MaterialTheme.colorScheme.primaryContainer,
                         titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
+                    ),
+                    actions = {
+                        if (!showAdvanced && showSetup == null && selectedDevice == null) {
+                            IconButton(onClick = { showAdvanced = true }) {
+                                Text(
+                                    text = "...",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 18.sp,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
+                    }
                 )
             }
         }
@@ -138,6 +158,9 @@ fun MyPodsApp(widthSizeClass: WindowWidthSizeClass) {
             when {
                 openWebUrl != null -> {
                     ServiceWebView(url = openWebUrl!!)
+                }
+                showAdvanced -> {
+                    AdvancedScreen(apiClient = apiClient, devices = devices)
                 }
                 showSetup != null -> {
                     SetupScreen(device = showSetup!!)
@@ -175,6 +198,267 @@ fun MyPodsApp(widthSizeClass: WindowWidthSizeClass) {
                         }
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun AdvancedScreen(apiClient: PodApiClient, devices: List<DeviceInfo>) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var config by remember { mutableStateOf<PodConfig?>(null) }
+    var isLoading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(Unit) {
+        config = apiClient.getConfig()
+        isLoading = false
+    }
+
+    if (isLoading) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        return
+    }
+
+    val currentConfig = config ?: PodConfig()
+
+    // Collect all known service names across all devices
+    val allServices = devices.flatMap { it.services }.map { it.name }.distinct().sorted()
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Service Web Paths
+        item {
+            Text(
+                text = "Service Web Paths",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Set the URL path appended when opening a service's web UI. For example, Pi-hole needs /admin.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        items(allServices) { serviceName ->
+            var path by remember(serviceName) {
+                mutableStateOf(currentConfig.webPaths[serviceName] ?: "")
+            }
+            ConfigField(
+                label = serviceName,
+                value = path,
+                placeholder = "e.g. /admin",
+                onValueChange = { path = it },
+                onSave = {
+                    if (path.isNotEmpty()) {
+                        currentConfig.webPaths[serviceName] = path
+                    } else {
+                        currentConfig.webPaths.remove(serviceName)
+                    }
+                    scope.launch {
+                        val ok = apiClient.saveConfig(currentConfig)
+                        config = currentConfig
+                        Toast.makeText(
+                            context,
+                            if (ok) "Saved" else "Failed to save",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            )
+        }
+
+        // Service Labels
+        item {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Service Labels",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Set a friendly display name for services. Leave empty to use the container name.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        items(allServices) { serviceName ->
+            var label by remember(serviceName) {
+                mutableStateOf(currentConfig.serviceLabels[serviceName] ?: "")
+            }
+            ConfigField(
+                label = serviceName,
+                value = label,
+                placeholder = "Display name",
+                onValueChange = { label = it },
+                onSave = {
+                    if (label.isNotEmpty()) {
+                        currentConfig.serviceLabels[serviceName] = label
+                    } else {
+                        currentConfig.serviceLabels.remove(serviceName)
+                    }
+                    scope.launch {
+                        val ok = apiClient.saveConfig(currentConfig)
+                        config = currentConfig
+                        Toast.makeText(
+                            context,
+                            if (ok) "Saved" else "Failed to save",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            )
+        }
+
+        // Add custom web path
+        item {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Add Custom Entry",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Pre-configure a web path for a service you plan to add.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        item {
+            var newName by remember { mutableStateOf("") }
+            var newPath by remember { mutableStateOf("") }
+
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    OutlinedTextField(
+                        value = newName,
+                        onValueChange = { newName = it },
+                        label = { Text("Container name") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = newPath,
+                        onValueChange = { newPath = it },
+                        label = { Text("Web path") },
+                        placeholder = { Text("/dashboard") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            if (newName.isNotBlank()) {
+                                if (newPath.isNotEmpty()) {
+                                    currentConfig.webPaths[newName] = newPath
+                                }
+                                scope.launch {
+                                    val ok = apiClient.saveConfig(currentConfig)
+                                    config = currentConfig
+                                    Toast.makeText(
+                                        context,
+                                        if (ok) "Added $newName" else "Failed to save",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                    if (ok) {
+                                        newName = ""
+                                        newPath = ""
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Add")
+                    }
+                }
+            }
+        }
+
+        // Info
+        item {
+            Spacer(modifier = Modifier.height(8.dp))
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "About",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Config is stored on rpi4b at ~/services/pod-api/config.json. Changes take effect on the next poll (10s).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "API: http://$PI_HOST:$API_PORT",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+fun ConfigField(
+    label: String,
+    value: String,
+    placeholder: String,
+    onValueChange: (String) -> Unit,
+    onSave: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = value,
+                onValueChange = onValueChange,
+                label = { Text(label) },
+                placeholder = { Text(placeholder) },
+                modifier = Modifier.weight(1f),
+                singleLine = true
+            )
+            Spacer(modifier = Modifier.size(8.dp))
+            Button(onClick = onSave) {
+                Text("Save")
             }
         }
     }
@@ -335,7 +619,6 @@ fun SetupScreen(device: DeviceInfo) {
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Step 1
         StepCard(
             step = "1",
             title = "Open Terminal on ${device.name}",
@@ -348,12 +631,10 @@ fun SetupScreen(device: DeviceInfo) {
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Step 2
         StepCard(step = "2", title = "Paste this command", description = null)
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Command box
         Card(
             colors = CardDefaults.cardColors(
                 containerColor = Color(0xFF1E1E1E)
@@ -385,7 +666,6 @@ fun SetupScreen(device: DeviceInfo) {
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Step 3
         StepCard(
             step = "3",
             title = "Done",
@@ -394,7 +674,6 @@ fun SetupScreen(device: DeviceInfo) {
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // SSH alternative
         Card(
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant
@@ -592,6 +871,9 @@ fun ServiceTile(service: ServiceInfo, onClick: () -> Unit) {
     val isRunning = service.status == "running"
     val statusColor = if (isRunning) Color(0xFF4CAF50) else Color(0xFFF44336)
     val hasWebUI = service.webPort != null
+    val displayName = service.label.ifEmpty {
+        service.name.replaceFirstChar { it.uppercase() }
+    }
 
     Card(
         modifier = Modifier
@@ -612,7 +894,7 @@ fun ServiceTile(service: ServiceInfo, onClick: () -> Unit) {
             ) {}
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = service.name.replaceFirstChar { it.uppercase() },
+                text = displayName,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
