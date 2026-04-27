@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -73,31 +75,42 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MyPodsApp(widthSizeClass: WindowWidthSizeClass) {
     val apiClient = remember { PodApiClient("http://$PI_HOST:$API_PORT") }
-    var services by remember { mutableStateOf<List<ServiceInfo>>(emptyList()) }
+    var devices by remember { mutableStateOf<List<DeviceInfo>>(emptyList()) }
     var health by remember { mutableStateOf<HealthInfo?>(null) }
     var isLoading by remember { mutableStateOf(true) }
-    var openService by remember { mutableStateOf<ServiceInfo?>(null) }
 
-    // Poll for updates every 10 seconds
+    // Navigation: null = device list, DeviceInfo = device's services, Pair = open webview
+    var selectedDevice by remember { mutableStateOf<DeviceInfo?>(null) }
+    var openWebUrl by remember { mutableStateOf<String?>(null) }
+
     LaunchedEffect(Unit) {
         while (true) {
-            services = apiClient.getServices()
+            devices = apiClient.getDevices()
             health = apiClient.getHealth()
             isLoading = false
             delay(10_000)
         }
     }
 
-    // Back button returns to library
-    BackHandler(enabled = openService != null) {
-        openService = null
+    BackHandler(enabled = openWebUrl != null || selectedDevice != null) {
+        if (openWebUrl != null) {
+            openWebUrl = null
+        } else {
+            selectedDevice = null
+        }
+    }
+
+    val title = when {
+        openWebUrl != null -> selectedDevice?.name ?: "Service"
+        selectedDevice != null -> selectedDevice!!.name
+        else -> "My Pods"
     }
 
     Scaffold(
         topBar = {
-            if (openService == null) {
+            if (openWebUrl == null) {
                 TopAppBar(
-                    title = { Text("My Pods") },
+                    title = { Text(title) },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = MaterialTheme.colorScheme.primaryContainer,
                         titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -112,28 +125,36 @@ fun MyPodsApp(widthSizeClass: WindowWidthSizeClass) {
                 .padding(innerPadding),
             color = MaterialTheme.colorScheme.background
         ) {
-            AnimatedContent(targetState = openService, label = "nav") { service ->
-                if (service != null && service.webPort != null) {
-                    ServiceWebView(
-                        url = "http://$PI_HOST:${service.webPort}${service.webPath}",
-                        widthSizeClass = widthSizeClass
-                    )
-                } else {
-                    if (isLoading) {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator()
+            when {
+                openWebUrl != null -> {
+                    ServiceWebView(url = openWebUrl!!)
+                }
+                selectedDevice != null -> {
+                    DeviceDetail(
+                        device = selectedDevice!!,
+                        widthSizeClass = widthSizeClass,
+                        onServiceClick = { service ->
+                            if (service.webPort != null) {
+                                openWebUrl = "http://${selectedDevice!!.ip}:${service.webPort}${service.webPath}"
+                            }
                         }
-                    } else {
-                        ServiceLibrary(
-                            services = services,
-                            health = health,
-                            widthSizeClass = widthSizeClass,
-                            onServiceClick = { openService = it }
-                        )
+                    )
+                }
+                isLoading -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
                     }
+                }
+                else -> {
+                    DeviceList(
+                        devices = devices,
+                        health = health,
+                        widthSizeClass = widthSizeClass,
+                        onDeviceClick = { selectedDevice = it }
+                    )
                 }
             }
         }
@@ -141,11 +162,11 @@ fun MyPodsApp(widthSizeClass: WindowWidthSizeClass) {
 }
 
 @Composable
-fun ServiceLibrary(
-    services: List<ServiceInfo>,
+fun DeviceList(
+    devices: List<DeviceInfo>,
     health: HealthInfo?,
     widthSizeClass: WindowWidthSizeClass,
-    onServiceClick: (ServiceInfo) -> Unit
+    onDeviceClick: (DeviceInfo) -> Unit
 ) {
     val columns = when (widthSizeClass) {
         WindowWidthSizeClass.Compact -> 2
@@ -157,19 +178,18 @@ fun ServiceLibrary(
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        // System health bar
         if (health != null) {
             HealthBar(health)
             Spacer(modifier = Modifier.height(16.dp))
         }
 
-        if (services.isEmpty()) {
+        if (devices.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "No services found.\nIs the Pi reachable?",
+                    text = "No devices found.\nIs Tailscale connected?",
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -181,8 +201,138 @@ fun ServiceLibrary(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(services) { service ->
-                    ServiceTile(service = service, onClick = { onServiceClick(service) })
+                items(devices) { device ->
+                    DeviceTile(device = device, onClick = { onDeviceClick(device) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DeviceTile(device: DeviceInfo, onClick: () -> Unit) {
+    val statusColor = if (device.online) Color(0xFF4CAF50) else Color(0xFF9E9E9E)
+    val osLabel = when (device.os) {
+        "linux" -> "Linux"
+        "macOS" -> "macOS"
+        "android" -> "Android"
+        "windows" -> "Windows"
+        else -> device.os
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
+        colors = CardDefaults.cardColors(
+            containerColor = if (device.online)
+                MaterialTheme.colorScheme.surfaceVariant
+            else
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Surface(
+                modifier = Modifier.size(12.dp),
+                shape = MaterialTheme.shapes.small,
+                color = statusColor
+            ) {}
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = device.name,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = osLabel,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+            )
+            if (device.services.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "${device.services.size} service${if (device.services.size > 1) "s" else ""}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun DeviceDetail(
+    device: DeviceInfo,
+    widthSizeClass: WindowWidthSizeClass,
+    onServiceClick: (ServiceInfo) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        // Device info
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                HealthStat(label = "IP", value = device.ip)
+                HealthStat(label = "OS", value = device.os)
+                HealthStat(
+                    label = "STATUS",
+                    value = if (device.online) "Online" else "Offline"
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        if (device.services.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (device.online) "No services running" else "Device offline",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            Text(
+                text = "Services",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            val columns = when (widthSizeClass) {
+                WindowWidthSizeClass.Compact -> 2
+                else -> 3
+            }
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(columns),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(device.services) { service ->
+                    ServiceTile(
+                        service = service,
+                        onClick = { onServiceClick(service) }
+                    )
                 }
             }
         }
@@ -204,14 +354,8 @@ fun HealthBar(health: HealthInfo) {
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             HealthStat(label = "CPU", value = health.cpuLoad)
-            HealthStat(
-                label = "MEM",
-                value = "${health.memUsedMb}/${health.memTotalMb}MB"
-            )
-            HealthStat(
-                label = "DISK",
-                value = "${health.diskUsed}/${health.diskTotal}"
-            )
+            HealthStat(label = "MEM", value = "${health.memUsedMb}/${health.memTotalMb}MB")
+            HealthStat(label = "DISK", value = "${health.diskUsed}/${health.diskTotal}")
             HealthStat(label = "UP", value = health.uptime)
         }
     }
@@ -252,7 +396,6 @@ fun ServiceTile(service: ServiceInfo, onClick: () -> Unit) {
             modifier = Modifier.padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Status dot
             Surface(
                 modifier = Modifier.size(12.dp),
                 shape = MaterialTheme.shapes.small,
@@ -284,7 +427,7 @@ fun ServiceTile(service: ServiceInfo, onClick: () -> Unit) {
 }
 
 @Composable
-fun ServiceWebView(url: String, widthSizeClass: WindowWidthSizeClass) {
+fun ServiceWebView(url: String) {
     AndroidView(
         factory = { context ->
             WebView(context).apply {

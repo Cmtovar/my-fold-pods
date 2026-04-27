@@ -16,7 +16,16 @@ data class ServiceInfo(
     @SerializedName("web_path") val webPath: String = ""
 )
 
-data class ServicesResponse(val services: List<ServiceInfo>)
+data class DeviceInfo(
+    val name: String,
+    val ip: String,
+    val os: String,
+    val online: Boolean,
+    @SerializedName("is_self") val isSelf: Boolean,
+    val services: List<ServiceInfo>
+)
+
+data class DevicesResponse(val devices: List<DeviceInfo>)
 
 data class HealthInfo(
     @SerializedName("cpu_load") val cpuLoad: String = "",
@@ -31,16 +40,16 @@ data class HealthInfo(
 class PodApiClient(private val baseUrl: String) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
         .build()
     private val gson = Gson()
 
-    suspend fun getServices(): List<ServiceInfo> = withContext(Dispatchers.IO) {
+    suspend fun getDevices(): List<DeviceInfo> = withContext(Dispatchers.IO) {
         try {
-            val request = Request.Builder().url("$baseUrl/api/services").build()
+            val request = Request.Builder().url("$baseUrl/api/devices").build()
             val response = client.newCall(request).execute()
             val body = response.body?.string() ?: return@withContext emptyList()
-            gson.fromJson(body, ServicesResponse::class.java).services
+            gson.fromJson(body, DevicesResponse::class.java).devices
         } catch (e: Exception) {
             emptyList()
         }
