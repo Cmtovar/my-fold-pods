@@ -90,7 +90,6 @@ class MainActivity : ComponentActivity() {
 fun MyPodsApp(widthSizeClass: WindowWidthSizeClass) {
     val apiClient = remember { PodApiClient("http://$PI_HOST:$API_PORT") }
     var devices by remember { mutableStateOf<List<DeviceInfo>>(emptyList()) }
-    var health by remember { mutableStateOf<HealthInfo?>(null) }
     var isLoading by remember { mutableStateOf(true) }
 
     var selectedDevice by remember { mutableStateOf<DeviceInfo?>(null) }
@@ -101,7 +100,6 @@ fun MyPodsApp(widthSizeClass: WindowWidthSizeClass) {
     LaunchedEffect(Unit) {
         while (true) {
             devices = apiClient.getDevices()
-            health = apiClient.getHealth()
             isLoading = false
             delay(10_000)
         }
@@ -168,6 +166,7 @@ fun MyPodsApp(widthSizeClass: WindowWidthSizeClass) {
                 selectedDevice != null -> {
                     DeviceDetail(
                         device = selectedDevice!!,
+                        apiClient = apiClient,
                         widthSizeClass = widthSizeClass,
                         onServiceClick = { service ->
                             if (service.webPort != null) {
@@ -187,7 +186,6 @@ fun MyPodsApp(widthSizeClass: WindowWidthSizeClass) {
                 else -> {
                     DeviceList(
                         devices = devices,
-                        health = health,
                         widthSizeClass = widthSizeClass,
                         onDeviceClick = { device ->
                             if (device.hasAgent) {
@@ -467,7 +465,6 @@ fun ConfigField(
 @Composable
 fun DeviceList(
     devices: List<DeviceInfo>,
-    health: HealthInfo?,
     widthSizeClass: WindowWidthSizeClass,
     onDeviceClick: (DeviceInfo) -> Unit
 ) {
@@ -481,11 +478,6 @@ fun DeviceList(
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        if (health != null) {
-            HealthBar(health)
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-
         if (devices.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -765,14 +757,25 @@ fun StepCard(step: String, title: String, description: String?) {
 @Composable
 fun DeviceDetail(
     device: DeviceInfo,
+    apiClient: PodApiClient,
     widthSizeClass: WindowWidthSizeClass,
     onServiceClick: (ServiceInfo) -> Unit
 ) {
+    var health by remember { mutableStateOf<HealthInfo?>(null) }
+
+    LaunchedEffect(device.ip) {
+        while (true) {
+            health = apiClient.getHealth(device.ip)
+            delay(10_000)
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp)
     ) {
+        // Device info ribbon
         Card(
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant
@@ -792,6 +795,12 @@ fun DeviceDetail(
                     value = if (device.online) "Online" else "Offline"
                 )
             }
+        }
+
+        // Health ribbon
+        if (health != null) {
+            Spacer(modifier = Modifier.height(8.dp))
+            HealthBar(health!!)
         }
 
         Spacer(modifier = Modifier.height(16.dp))

@@ -65,9 +65,10 @@ class PodApiClient(private val baseUrl: String) {
         }
     }
 
-    suspend fun getHealth(): HealthInfo? = withContext(Dispatchers.IO) {
+    suspend fun getHealth(deviceIp: String? = null): HealthInfo? = withContext(Dispatchers.IO) {
         try {
-            val request = Request.Builder().url("$baseUrl/api/health").build()
+            val host = deviceIp ?: baseUrl.removePrefix("http://").split(":")[0]
+            val request = Request.Builder().url("http://$host:8090/api/health").build()
             val response = client.newCall(request).execute()
             val body = response.body?.string() ?: return@withContext null
             gson.fromJson(body, HealthInfo::class.java)
