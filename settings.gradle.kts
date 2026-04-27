@@ -21,5 +21,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "ProFoldApp"
+rootProject.name = "MyFoldPods"
 include(":app")

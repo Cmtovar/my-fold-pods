@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.profold.app"
+    namespace = "com.profold.pods"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.profold.app"
+        applicationId = "com.profold.pods"
         minSdk = 30
         targetSdk = 35
         versionCode = 1
@@ -67,6 +67,13 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.activity:activity-compose:1.9.3")
+
+    // Networking
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.google.code.gson:gson:2.11.0")
+
+    // WebView
+    implementation("androidx.webkit:webkit:1.12.1")
 
     // Debug
     debugImplementation("androidx.compose.ui:ui-tooling")
