@@ -514,8 +514,10 @@ fun DeviceList(
 
 @Composable
 fun DeviceTile(device: DeviceInfo, onClick: () -> Unit) {
+    val isProbing = device.probeStatus == "probing"
     val statusColor = when {
         !device.online -> Color(0xFF9E9E9E)
+        isProbing -> Color(0xFF42A5F5)
         device.hasAgent -> Color(0xFF4CAF50)
         else -> Color(0xFFFFA726)
     }
@@ -567,6 +569,11 @@ fun DeviceTile(device: DeviceInfo, onClick: () -> Unit) {
                     text = "Offline",
                     style = MaterialTheme.typography.labelSmall,
                     color = Color(0xFF9E9E9E)
+                )
+                isProbing -> Text(
+                    text = "Checking...",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF42A5F5)
                 )
                 device.hasAgent && device.services.isNotEmpty() -> Text(
                     text = "${device.services.size} service${if (device.services.size > 1) "s" else ""}",
