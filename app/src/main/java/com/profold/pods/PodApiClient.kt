@@ -22,6 +22,7 @@ data class DeviceInfo(
     val os: String,
     val online: Boolean,
     @SerializedName("is_self") val isSelf: Boolean,
+    @SerializedName("has_agent") val hasAgent: Boolean,
     val services: List<ServiceInfo>
 )
 

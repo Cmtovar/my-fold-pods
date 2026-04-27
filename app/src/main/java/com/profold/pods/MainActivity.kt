@@ -1,13 +1,16 @@
 package com.profold.pods
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Bundle
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,17 +22,20 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -47,9 +53,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.profold.pods.ui.theme.MyPodsTheme
 import kotlinx.coroutines.delay
@@ -79,9 +88,9 @@ fun MyPodsApp(widthSizeClass: WindowWidthSizeClass) {
     var health by remember { mutableStateOf<HealthInfo?>(null) }
     var isLoading by remember { mutableStateOf(true) }
 
-    // Navigation: null = device list, DeviceInfo = device's services, Pair = open webview
     var selectedDevice by remember { mutableStateOf<DeviceInfo?>(null) }
     var openWebUrl by remember { mutableStateOf<String?>(null) }
+    var showSetup by remember { mutableStateOf<DeviceInfo?>(null) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -92,16 +101,17 @@ fun MyPodsApp(widthSizeClass: WindowWidthSizeClass) {
         }
     }
 
-    BackHandler(enabled = openWebUrl != null || selectedDevice != null) {
-        if (openWebUrl != null) {
-            openWebUrl = null
-        } else {
-            selectedDevice = null
+    BackHandler(enabled = openWebUrl != null || selectedDevice != null || showSetup != null) {
+        when {
+            openWebUrl != null -> openWebUrl = null
+            showSetup != null -> showSetup = null
+            selectedDevice != null -> selectedDevice = null
         }
     }
 
     val title = when {
         openWebUrl != null -> selectedDevice?.name ?: "Service"
+        showSetup != null -> "Set Up ${showSetup!!.name}"
         selectedDevice != null -> selectedDevice!!.name
         else -> "My Pods"
     }
@@ -129,6 +139,9 @@ fun MyPodsApp(widthSizeClass: WindowWidthSizeClass) {
                 openWebUrl != null -> {
                     ServiceWebView(url = openWebUrl!!)
                 }
+                showSetup != null -> {
+                    SetupScreen(device = showSetup!!)
+                }
                 selectedDevice != null -> {
                     DeviceDetail(
                         device = selectedDevice!!,
@@ -153,7 +166,13 @@ fun MyPodsApp(widthSizeClass: WindowWidthSizeClass) {
                         devices = devices,
                         health = health,
                         widthSizeClass = widthSizeClass,
-                        onDeviceClick = { selectedDevice = it }
+                        onDeviceClick = { device ->
+                            if (device.hasAgent) {
+                                selectedDevice = device
+                            } else if (device.online) {
+                                showSetup = device
+                            }
+                        }
                     )
                 }
             }
@@ -211,7 +230,11 @@ fun DeviceList(
 
 @Composable
 fun DeviceTile(device: DeviceInfo, onClick: () -> Unit) {
-    val statusColor = if (device.online) Color(0xFF4CAF50) else Color(0xFF9E9E9E)
+    val statusColor = when {
+        !device.online -> Color(0xFF9E9E9E)
+        device.hasAgent -> Color(0xFF4CAF50)
+        else -> Color(0xFFFFA726)
+    }
     val osLabel = when (device.os) {
         "linux" -> "Linux"
         "macOS" -> "macOS"
@@ -254,13 +277,200 @@ fun DeviceTile(device: DeviceInfo, onClick: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
             )
-            if (device.services.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
+            Spacer(modifier = Modifier.height(4.dp))
+            when {
+                !device.online -> Text(
+                    text = "Offline",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF9E9E9E)
+                )
+                device.hasAgent && device.services.isNotEmpty() -> Text(
                     text = "${device.services.size} service${if (device.services.size > 1) "s" else ""}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
+                device.hasAgent -> Text(
+                    text = "Connected",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF4CAF50)
+                )
+                else -> Text(
+                    text = "Tap to set up",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFFFFA726)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun SetupScreen(device: DeviceInfo) {
+    val context = LocalContext.current
+    val installCommand = "curl -sL http://$PI_HOST:$API_PORT/install | bash"
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp)
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            text = "Set up ${device.name}",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = "Run this command on ${device.name} to install the agent. It auto-detects containers and starts reporting to My Pods.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // Step 1
+        StepCard(
+            step = "1",
+            title = "Open Terminal on ${device.name}",
+            description = when (device.os) {
+                "macOS" -> "Spotlight (Cmd+Space) > type \"Terminal\""
+                "linux" -> "Open your terminal emulator"
+                else -> "Open a command prompt"
+            }
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Step 2
+        StepCard(step = "2", title = "Paste this command", description = null)
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Command box
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = Color(0xFF1E1E1E)
+            ),
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = installCommand,
+                modifier = Modifier.padding(16.dp),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+                color = Color(0xFF4EC9B0)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Button(
+            onClick = {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("install command", installCommand))
+                Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Copy Command")
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Step 3
+        StepCard(
+            step = "3",
+            title = "Done",
+            description = "The agent will start automatically. ${device.name} will appear as connected in My Pods within 10 seconds."
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // SSH alternative
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "Or via SSH",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "ssh user@${device.ip} \"$installCommand\"",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        val sshCommand = "ssh user@${device.ip} \"$installCommand\""
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("ssh command", sshCommand))
+                        Toast.makeText(context, "SSH command copied", Toast.LENGTH_SHORT).show()
+                    }
+                ) {
+                    Text("Copy SSH Command")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun StepCard(step: String, title: String, description: String?) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Surface(
+                modifier = Modifier.size(28.dp),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.primary
+            ) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                    Text(
+                        text = step,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.size(12.dp))
+            Column {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                if (description != null) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }
@@ -277,7 +487,6 @@ fun DeviceDetail(
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        // Device info
         Card(
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant
