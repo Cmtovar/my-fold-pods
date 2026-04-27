@@ -115,7 +115,7 @@ fun MyPodsApp(widthSizeClass: WindowWidthSizeClass) {
             AnimatedContent(targetState = openService, label = "nav") { service ->
                 if (service != null && service.webPort != null) {
                     ServiceWebView(
-                        url = "http://$PI_HOST:${service.webPort}",
+                        url = "http://$PI_HOST:${service.webPort}${service.webPath}",
                         widthSizeClass = widthSizeClass
                     )
                 } else {

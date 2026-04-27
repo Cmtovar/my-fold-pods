@@ -12,7 +12,8 @@ data class ServiceInfo(
     val name: String,
     val status: String,
     val image: String,
-    @SerializedName("web_port") val webPort: Int?
+    @SerializedName("web_port") val webPort: Int?,
+    @SerializedName("web_path") val webPath: String = ""
 )
 
 data class ServicesResponse(val services: List<ServiceInfo>)
