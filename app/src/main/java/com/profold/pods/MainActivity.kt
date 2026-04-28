@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.os.Bundle
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
@@ -939,10 +940,13 @@ fun ServiceWebView(url: String) {
         factory = { context ->
             WebView(context).apply {
                 webViewClient = WebViewClient()
+                webChromeClient = WebChromeClient()
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.loadWithOverviewMode = true
                 settings.useWideViewPort = true
+                settings.mediaPlaybackRequiresUserGesture = false
+                settings.allowContentAccess = true
                 loadUrl(url)
             }
         },
